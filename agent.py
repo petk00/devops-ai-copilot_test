@@ -17,7 +17,6 @@ class AgentState(TypedDict):
     final_output: str
 
 # 2. ČVOR 1: Dohvaćanje znanja iz Qdrant RAG baze
-# Provjeri jesu li ove linije savršeno poravnate s lijeve strane:
 async def dohvati_znanje_node(state: AgentState):
     print("\n[AGENT] Pretražujem lokalnu bazu znanja...")
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
@@ -39,6 +38,14 @@ async def llm_misli_node(state: AgentState):
     
     sistemski_prompt = f"""
     You are an autonomous DevOps Agent. Your job is to fulfill the user request using available tools.
+    
+    CRITICAL: To find out the current date and time, you MUST execution the terminal command 'date' first! 
+    Do not guess the time, and do not try to write the file before you have the output of the 'date' command.
+
+    If the last message in history shows that 'kreiraj_ili_zapisi_datoteku' was successfully executed, you MUST immediately output:
+    {{"action": "complete", "summary": "Successfully fetched date and saved to build_info.txt"}}
+    Do not invoke any more tools after the file is created.
+
     Available tools:
     - 'kreiraj_ili_zapisi_datoteku' (args: putanja, sadrzaj)
     - 'pokreni_lokalnu_naredbu' (args: naredba)
@@ -49,9 +56,6 @@ async def llm_misli_node(state: AgentState):
     You must output a JSON object with your next action. 
     If you need to use a tool:
     {{"action": "call_tool", "name": "tool_name", "arguments": {{"arg": "val"}}}}
-    
-    If the task is fully complete and verified, output:
-    {{"action": "complete", "summary": "What you did"}}
     """
     
     history = [SystemMessage(content=sistemski_prompt)]
@@ -65,7 +69,9 @@ async def llm_misli_node(state: AgentState):
     
     odgovor = await llm.ainvoke(history)
     
-    # Dodajemo misao u povijest poruka
+    # Ispisujemo sirovi odgovor u terminal radi lakšeg debugginga
+    print(f"[LOG MODELA]: {odgovor.content}")
+    
     nove_poruke = state["messages"] + [{"role": "assistant", "content": odgovor.content}]
     
     return {"messages": nove_poruke, "iterations": state["iterations"] + 1}
@@ -89,19 +95,21 @@ async def izvrsi_alat_node(state: AgentState):
         
     print(f"[ALAT] Rezultat izvršavanja:\n{rezultat}")
     
-    # Vraćamo rezultat alata natrag u povijest poruka kako bi ga LLM vidio
+    # Vraćamo rezultat natrag u povijest kako bi ga LLM vidio u idućem koraku
     nove_poruke = state["messages"] + [{"role": "user", "content": f"Result of tool {tool_name}: {rezultat}"}]
     return {"messages": nove_poruke}
 
-# 5. RUB (Edge): Odlučuje kamo idemo dalje
+# 5. RUB (Edge): Odlučuje kamo idemo dalje na temelju stanja
 def usmjeri_tok(state: AgentState):
     zadnja_poruka = state["messages"][-1]["content"]
     try:
         data = json.loads(zadnja_poruka)
         if data.get("action") == "complete" or state["iterations"] >= 5:
+            print("\n[AGENT] Završavam rad (Zadatak dovršen ili postignut limit iteracija).")
             return "kraj"
         return "izvrsi_alat"
-    except:
+    except Exception as e:
+        print(f"[GREŠKA PARSIRANJA]: {e}")
         return "kraj"
 
 # --- SASTAVLJANJE GRAFA ---
@@ -116,7 +124,7 @@ workflow.add_node("izvrsi_alat", izvrsi_alat_node)
 workflow.set_entry_point("dohvati_znanje")
 workflow.add_edge("dohvati_znanje", "llm_misli")
 
-# Uvjetno grananje nakon što LLM razmisli
+# Uvjetno grananje nakon razmišljanja modela
 workflow.add_conditional_edges(
     "llm_misli",
     usmjeri_tok,
@@ -126,10 +134,10 @@ workflow.add_conditional_edges(
     }
 )
 
-# Nakon izvršavanja alata, vraćamo se modelu na ponovno razmišljanje (Petlja!)
+# Nakon izvršavanja alata, vraćamo se modelu na ponovno razmišljanje
 workflow.add_edge("izvrsi_alat", "llm_misli")
 
-# Kompajliramo aplikaciju
+# Kompajliramo LangGraph aplikaciju
 app = workflow.compile()
 
 async def pokreni_agenta():
