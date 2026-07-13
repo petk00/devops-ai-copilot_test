@@ -1,5 +1,7 @@
 # 🤖 DevOps AI Copilot
 
+doslovno zajebancija i testiranje
+
 DevOps AI Copilot je autonomni AI agent dizajniran za automatizaciju svakodnevnih DevOps zadataka. Projekt koristi **LangGraph** za upravljanje logikom, **Qdrant** kao vektorsku bazu za pretraživanje znanja (RAG), te **Streamlit** za interaktivno web sučelje.
 
 ---
